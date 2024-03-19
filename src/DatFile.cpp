@@ -55,86 +55,89 @@ namespace gw2b {
         this->close( );
     }
 
-    bool DatFile::open( const wxString& p_filename ) {
-        this->close( );
-
-        while ( true ) {
-            // Open file
-            m_file.Open( p_filename );
-            if ( !m_file.IsOpened( ) ) {
-                break;
-            }
-
-            // Read header
-            if ( static_cast<size_t>( m_file.Length( ) ) < sizeof( m_datHead ) ) {
-                break;
-            }
-            m_file.Read( &m_datHead, sizeof( m_datHead ) );
-
-            // Read MFT Header
-            if ( static_cast<uint64>( m_file.Length( ) ) < m_datHead.mftOffset + m_datHead.mftSize ) {
-                break;
-            }
-            m_file.Seek( m_datHead.mftOffset, wxFromStart );
-            m_file.Read( &m_mftHead, sizeof( m_mftHead ) );
-
-            // Read all of the MFT
-            if ( m_datHead.mftSize != m_mftHead.numEntries * sizeof( ANetMftEntry ) ) {
-                break;
-            }
-            if ( m_datHead.mftSize % sizeof( ANetMftEntry ) ) {
-                break;
-            }
-
-            m_mftEntries.SetSize( m_datHead.mftSize / sizeof( ANetMftEntry ) );
-            m_file.Seek( m_datHead.mftOffset, wxFromStart );
-            m_file.Read( m_mftEntries.GetPointer( ), m_datHead.mftSize );
-
-            // Read the file id entry table
-            if ( static_cast<uint64>( m_file.Length( ) ) < m_mftEntries[2].offset + m_mftEntries[2].size ) {
-                break;
-            }
-            if ( m_mftEntries[2].size % sizeof( ANetFileIdEntry ) ) {
-                break;
-            }
-
-            uint numFileIdEntries = m_mftEntries[2].size / sizeof( ANetFileIdEntry );
-            Array<ANetFileIdEntry> fileIdTable( numFileIdEntries );
-            m_file.Seek( m_mftEntries[2].offset, wxFromStart );
-            m_file.Read( fileIdTable.GetPointer( ), m_mftEntries[2].size );
-
-            // Extract the entry -> base/file ID tables
-            m_entryToId.SetSize( m_mftEntries.GetSize( ) );
-            ::memset( m_entryToId.GetPointer( ), 0, m_entryToId.GetByteSize( ) );
-
-            for ( uint i = 0; i < numFileIdEntries; i++ ) {
-                if ( fileIdTable[i].fileId == 0 && fileIdTable[i].mftEntryIndex == 0 ) {
-                    continue;
-                }
-
-                uint entryIndex = fileIdTable[i].mftEntryIndex;
-                auto& entry = m_entryToId[entryIndex];
-
-                if ( entry.baseId == 0 ) {
-                    entry.baseId = fileIdTable[i].fileId;
-                } else if ( entry.fileId == 0 ) {
-                    entry.fileId = fileIdTable[i].fileId;
-                }
-
-                if ( entry.baseId > 0 && entry.fileId > 0 ) {
-                    if ( entry.baseId > entry.fileId ) {
-                        std::swap( entry.baseId, entry.fileId );
-                    }
-                }
-            }
-
-            // Success!
-            return true;
-        }
-
-        this->close( );
+ bool DatFile::open(const wxString& p_filename) {
+    this->close();
+    // Open file
+    m_file.Open(p_filename);
+    if (!m_file.IsOpened()) {
         return false;
     }
+
+    // Retrieve the file length once and reuse it
+    auto fileLength = m_file.Length();
+
+    // Read header
+    if (static_cast<size_t>(fileLength) < sizeof(m_datHead)) {
+        this->close();
+        return false;
+    }
+    m_file.Read(&m_datHead, sizeof(m_datHead));
+
+    // Read MFT Header
+    if (static_cast<uint64>(fileLength) < m_datHead.mftOffset + m_datHead.mftSize) {
+        this->close();
+        return false;
+    }
+    m_file.Seek(m_datHead.mftOffset, wxFromStart);
+    m_file.Read(&m_mftHead, sizeof(m_mftHead));
+
+    // Read all of the MFT
+    if (m_datHead.mftSize != m_mftHead.numEntries * sizeof(ANetMftEntry)) {
+        this->close();
+        return false;
+    }
+    if (m_datHead.mftSize % sizeof(ANetMftEntry)) {
+        this->close();
+        return false;
+    }
+
+    m_mftEntries.SetSize(m_datHead.mftSize / sizeof(ANetMftEntry));
+    m_file.Seek(m_datHead.mftOffset, wxFromStart);
+    m_file.Read(m_mftEntries.GetPointer(), m_datHead.mftSize);
+
+    // Read the file id entry table
+    if (static_cast<uint64>(fileLength) < m_mftEntries[2].offset + m_mftEntries[2].size) {
+        this->close();
+        return false;
+    }
+    if (m_mftEntries[2].size % sizeof(ANetFileIdEntry)) {
+        this->close();
+        return false;
+    }
+
+    uint numFileIdEntries = m_mftEntries[2].size / sizeof(ANetFileIdEntry);
+    Array<ANetFileIdEntry> fileIdTable(numFileIdEntries);
+    m_file.Seek(m_mftEntries[2].offset, wxFromStart);
+    m_file.Read(fileIdTable.GetPointer(), m_mftEntries[2].size);
+
+    // Extract the entry -> base/file ID tables
+    m_entryToId.SetSize(m_mftEntries.GetSize());
+    ::memset(m_entryToId.GetPointer(), 0, m_entryToId.GetByteSize());
+
+    for (uint i = 0; i < numFileIdEntries; i++) {
+        if (fileIdTable[i].fileId == 0 && fileIdTable[i].mftEntryIndex == 0) {
+            continue;
+        }
+
+        uint entryIndex = fileIdTable[i].mftEntryIndex;
+        auto& entry = m_entryToId[entryIndex];
+
+        if (entry.baseId == 0) {
+            entry.baseId = fileIdTable[i].fileId;
+        } else if (entry.fileId == 0) {
+            entry.fileId = fileIdTable[i].fileId;
+        }
+
+        if (entry.baseId > 0 && entry.fileId > 0) {
+            if (entry.baseId > entry.fileId) {
+                std::swap(entry.baseId, entry.fileId);
+            }
+        }
+    }
+
+    // Success!
+    return true;
+}
 
     bool DatFile::isOpen( ) const {
         return m_file.IsOpened( );
